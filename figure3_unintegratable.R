@@ -447,7 +447,7 @@ Heatmap(ranks ,
         cluster_rows = FALSE,
         cluster_columns = FALSE,
         rect_gp = gpar(col = "black", lwd = 1),
-        col = colorRamp2(c(1, 7), c("#EFF3FF", "#2171B5")),
+        col = colorRamp2(c(1, 8), c("#EFF3FF", "#2171B5")),
         row_names_side = "left")
 
 ## Write the metrics to a spreadsheet
