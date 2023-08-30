@@ -192,7 +192,7 @@ for (i in 1:n_metrics){
                               cluster_rows = FALSE,
                               cluster_columns = FALSE,
                               rect_gp = gpar(col = "black", lwd = 1),
-                              col = colorRamp2(c(1, 8), c("#EFF3FF", "#2171B5")),
+                              col = colorRamp2(c(1, 9), c("#EFF3FF", "#2171B5")),
                               row_names_side = "left",
                               
   )
