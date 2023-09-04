@@ -14,6 +14,7 @@ library(ggplot2)
 library(patchwork)
 library(data.table)
 library(HGC)
+library(edgeR)
 library(reticulate)
 use_virtualenv("PythonEnv/scVI_new/")
 
