@@ -381,7 +381,7 @@ saveRDS(tracking, "data/Subsets/tracking.Rds")
 ### Evaluate
 ## Full dataset
 # Setup to capture results
-results <- as.data.frame(matrix(ncol=4, nrow = 1))
+results <- as.data.frame(matrix(ncol=7, nrow = 1))
 results.counter <- 1
 
 # Embed
@@ -394,7 +394,7 @@ if (length(assays.remove) > 0) { for (assay in assays.remove) { dataset[[assay]]
 proc <- preprocess(dataset, "batch_label", verbose = FALSE)
 cpca <- cpca(proc, verbose = FALSE)
 inputs <- prepareData(cpca$cpca, verbose = FALSE)
-for (rep in 1:5) {
+for (rep in 1:6) {
   # Embed and evaluate
   solved <- JOINTLYsolve(inputs$kernels, inputs$snn, inputs$rareity, cpca, bpparam = BiocParallel::MulticoreParam(), progressbar = TRUE, share.objects = FALSE, verbose = TRUE)
   H <- t(do.call("cbind",solved$Hmat))
@@ -413,17 +413,45 @@ dataset$transfer_label <- labels[,2]
 dataset <- subset(dataset, transfer_label != "")
 dataset <- subset(dataset, transfer_label %in% names(which(table(dataset$transfer_label) >= 10)))
 
+## LISI and ASW
+global_cLISI <- global_iLISI <- global_bASW <- global_cASW <- c()
+md.subset <- dataset@meta.data
+
 # LISI
-global_cLISI <- global_iLISI <- c()
 for (i in 1:5) {
   LISIS <- compute_lisi(dataset[[paste("JOINTLY_rep",i, sep="")]]@cell.embeddings[,1:15], dataset@meta.data, label_colnames = c("batch_label", "transfer_label"))
   global_cLISI <- c(global_cLISI, median((length(unique(dataset@meta.data[,"transfer_label"]))-LISIS[,2]) / (length(unique(dataset@meta.data[,"transfer_label"])) - 1)))
   global_iLISI <- c(global_iLISI, median((LISIS[,1]-1) / (length(unique(dataset@meta.data[,"batch_label"])) - 1)))
+
+  # Distance mat
+  space <- dataset[[paste("JOINTLY_rep",i, sep="")]]@cell.embeddings[,1:15]
+  space <- space[ rownames(space) %in% rownames(md.subset),]
+  space <- space[ match(rownames(md.subset), rownames(space)),]
+  dist.mat <- Rfast::Dist(space[,1:15])
+  
+  # Batch ASW
+  sil <- cluster::silhouette(as.numeric(factor(md.subset[,"batch_label"], labels = seq(length(unique(md.subset[,"batch_label"]))))), dmatrix = dist.mat, do.col.sort = FALSE)
+  sil <- sil[,"sil_width"]
+  sil <- abs(sil)
+  avg.sil <- c()
+  for (cl in unique(md.subset[,"transfer_label"])) {
+    avg.sil <- c(avg.sil, sum(1 - sil[ which(md.subset[,"transfer_label"] == cl)]) / length( which(md.subset[,"transfer_label"] == cl)))
+  }
+  global_bASW <- c(global_bASW, mean(avg.sil))
+  
+  # Cell-type ASW
+  sil <- cluster::silhouette(as.numeric(factor(md.subset[,"transfer_label"], labels = seq(length(unique(md.subset[,"transfer_label"]))))), dmatrix = dist.mat, do.col.sort = FALSE)
+  sil <- sil[,"sil_width"]
+  global_cASW <- c(global_cASW, mean((sil + 1) / 2))
 }
+
+# Results
 results[results.counter,1] <- 0
 results[results.counter,2] <- "None"
 results[results.counter,3] <- global_iLISI[ which.max(global_iLISI)]
 results[results.counter,4] <- global_cLISI[ which.max(global_iLISI)]
+results[results.counter,5] <- global_bASW[ which.max(global_iLISI)]
+results[results.counter,6] <- global_cASW[ which.max(global_iLISI)]
 results.counter <- results.counter + 1
 
 ## Subsets
@@ -437,12 +465,35 @@ for (obj in tracking[ tracking[,1] == file,2]) {
   dataset.subset <- subset(dataset.subset, transfer_label != "")
   dataset.subset <- subset(dataset.subset, transfer_label %in% names(which(table(dataset$transfer_label) >= 10)))
   
-  # LISI
-  global_cLISI <- global_iLISI <- c()
+  ## LISI and ASW
+  global_cLISI <- global_iLISI <- global_bASW <- global_cASW <- c()
+  md.subset <- dataset.subset@meta.data
   for (i in 1:5) {
+    # LISI
     LISIS <- compute_lisi(dataset.subset[[paste("JOINTLY_rep",i, sep="")]]@cell.embeddings[,1:15], dataset.subset@meta.data, label_colnames = c("batch_label", "transfer_label"))
     global_cLISI <- c(global_cLISI, median((length(unique(dataset.subset@meta.data[,"transfer_label"]))-LISIS[,2]) / (length(unique(dataset.subset@meta.data[,"transfer_label"])) - 1)))
     global_iLISI <- c(global_iLISI, median((LISIS[,1]-1) / (length(unique(dataset.subset@meta.data[,"batch_label"])) - 1)))
+    
+    # Distance mat
+    space <- dataset.subset[[paste("JOINTLY_rep",i, sep="")]]@cell.embeddings[,1:15]
+    space <- space[ rownames(space) %in% rownames(md.subset),]
+    space <- space[ match(rownames(md.subset), rownames(space)),]
+    dist.mat <- Rfast::Dist(space[,1:15])
+    
+    # Batch ASW
+    sil <- cluster::silhouette(as.numeric(factor(md.subset[,"batch_label"], labels = seq(length(unique(md.subset[,"batch_label"]))))), dmatrix = dist.mat, do.col.sort = FALSE)
+    sil <- sil[,"sil_width"]
+    sil <- abs(sil)
+    avg.sil <- c()
+    for (cl in unique(md.subset[,"transfer_label"])) {
+      avg.sil <- c(avg.sil, sum(1 - sil[ which(md.subset[,"transfer_label"] == cl)]) / length( which(md.subset[,"transfer_label"] == cl)))
+    }
+    global_bASW <- c(global_bASW, mean(avg.sil))
+    
+    # Cell-type ASW
+    sil <- cluster::silhouette(as.numeric(factor(md.subset[,"transfer_label"], labels = seq(length(unique(md.subset[,"transfer_label"]))))), dmatrix = dist.mat, do.col.sort = FALSE)
+    sil <- sil[,"sil_width"]
+    global_cASW <- c(global_cASW, mean((sil + 1) / 2))
   }
   
   # Record results
@@ -450,6 +501,8 @@ for (obj in tracking[ tracking[,1] == file,2]) {
   results[results.counter,2] <- tracking[ tracking[,2] == obj,4]
   results[results.counter,3] <- global_iLISI[ which.max(global_iLISI)]
   results[results.counter,4] <- global_cLISI[ which.max(global_iLISI)]
+  results[results.counter,5] <- global_bASW[ which.max(global_iLISI)]
+  results[results.counter,6] <- global_cASW[ which.max(global_iLISI)]
   results.counter <- results.counter + 1
   print(results.counter)
 }
@@ -471,7 +524,28 @@ for (q in (1:5)[-reference.set]) {
   }
   overlap.score <- c(overlap.score, hits / (nrow(subs.nn) * 30))
 }
-results[1,5] <- max(overlap.score)
+results[1,7] <- max(overlap.score)
+
+# Loop across different reference.sets
+full.overlap <- c()
+for (ref.set in 1:6) {
+  overlap.score <- c()
+  for (q in (1:6)[-ref.set]) {
+    full <- dataset[[paste("JOINTLY_rep", ref.set, sep="")]]@cell.embeddings[,1:15]
+    subs <- dataset[[paste("JOINTLY_rep", q, sep="")]]@cell.embeddings[,1:15]
+    subs <- subs[ match(rownames(full), rownames(subs)),]
+    full.nn <- RANN::nn2(full, k= 31)$nn.idx
+    subs.nn <- RANN::nn2(subs, k= 31)$nn.idx
+    hits <- 0
+    for (row in 1:nrow(full.nn)) {
+      hits <- hits + sum(full.nn[1,2:31] %in% subs.nn[1,2:31])
+    }
+    overlap.score <- c(overlap.score, hits / (nrow(subs.nn) * 30))
+  }
+  full.overlap <- c(full.overlap, max(overlap.score))
+}
+full.mean <- mean(full.overlap)
+full.sem <- sd(full.overlap)/sqrt(6)
 
 # Subsamples
 for (obj in tracking[ tracking[,1] == file,2]) {
@@ -502,25 +576,36 @@ for (obj in tracking[ tracking[,1] == file,2]) {
     }
     overlap.score <- c(overlap.score, hits / (nrow(subs.nn) * 30))
   }
-  results[ results[,2] == tracking[ tracking[,2] == obj,4],5] <- max(overlap.score)
+  results[ results[,2] == tracking[ tracking[,2] == obj,4],7] <- max(overlap.score)
   print(obj)
 }
 
 ## Calculate averages and SEMs
-agg.mean <- aggregate(results[,c(3,4,5)], by = list(results[,1]), FUN="mean")
-agg.sem <- aggregate(results[,c(3,4,5)], by = list(results[,1]), FUN="sd")
-agg.sem[2,2:4] <- agg.sem[2,2:4] / sqrt(nrow(results[ results[,1] == 1,]))
-agg.sem[3,2:4] <- agg.sem[3,2:4] / sqrt(nrow(results[ results[,1] == 2,]))
-agg.sem[4,2:4] <- agg.sem[4,2:4] / sqrt(nrow(results[ results[,1] == 3,]))
+agg.mean <- aggregate(results[,c(3,4,5,6,7)], by = list(results[,1]), FUN="mean")
+agg.sem <- aggregate(results[,c(3,4,5,6,7)], by = list(results[,1]), FUN="sd")
+agg.sem[2,2:6] <- agg.sem[2,2:6] / sqrt(nrow(results[ results[,1] == 1,]))
+agg.sem[3,2:6] <- agg.sem[3,2:6] / sqrt(nrow(results[ results[,1] == 2,]))
+agg.sem[4,2:6] <- agg.sem[4,2:6] / sqrt(nrow(results[ results[,1] == 3,]))
+agg.sem[4,2:6] <- agg.sem[4,2:6] / sqrt(nrow(results[ results[,1] == 3,]))
 
 ## Plots
-par(mfcol=c(1,3))
+par(mfcol=c(1,5))
 plot(x = c(0,1,2,3), y = agg.mean[,2], ylim=c(0,1), type="o", las = 2, ylab="Global iLISI", pch=16, xlab= "# Datasets removed", xaxt = "n")
 axis(side = 1, at = c(0,1,2,3), labels = c(0,1,2,3))
 arrows(c(0,1,2,3), agg.mean[,2] - agg.sem[,2], c(0,1,2,3), agg.mean[,2] + agg.sem[,2], angle = 90, code = 3, length = 0.05)
+
+plot(x = c(0,1,2,3), y = agg.mean[,4], ylim=c(0,1), type="o", las = 2, ylab="Global bASW", pch=16, xlab= "# Datasets removed", xaxt = "n")
+axis(side = 1, at = c(0,1,2,3), labels = c(0,1,2,3))
+arrows(c(0,1,2,3), agg.mean[,4] - agg.sem[,4], c(0,1,2,3), agg.mean[,4] + agg.sem[,4], angle = 90, code = 3, length = 0.05)
+
 plot(x = c(0,1,2,3), y = agg.mean[,3], ylim=c(0,1), type="o", las = 2, ylab="Global cLISI", pch=16, xlab = "# Datasets removed", xaxt = "n")
 axis(side = 1, at = c(0,1,2,3), labels = c(0,1,2,3))
 arrows(c(0,1,2,3), agg.mean[,3] - agg.sem[,3], c(0,1,2,3), agg.mean[,3] + agg.sem[,3], angle = 90, code = 3, length = 0.05)
-plot(x = c(0,1,2,3), y = agg.mean[,4], ylim=c(0,1), type="o", las = 2, ylab="Neighborhood preservation", pch=16, xlab = "# Datasets removed", xaxt = "n")
+
+plot(x = c(0,1,2,3), y = agg.mean[,5], ylim=c(0,1), type="o", las = 2, ylab="Global cASW", pch=16, xlab = "# Datasets removed", xaxt = "n")
 axis(side = 1, at = c(0,1,2,3), labels = c(0,1,2,3))
-arrows(c(0,1,2,3), agg.mean[,4] - agg.sem[,4], c(0,1,2,3), agg.mean[,4] + agg.sem[,4], angle = 90, code = 3, length = 0.05)
+arrows(c(0,1,2,3), agg.mean[,5] - agg.sem[,5], c(0,1,2,3), agg.mean[,5] + agg.sem[,5], angle = 90, code = 3, length = 0.05)
+
+plot(x = c(0,1,2,3), y = c(full.mean, agg.mean[2:4,6]), ylim=c(0,1), type="o", las = 2, ylab="Neighborhood preservation", pch=16, xlab = "# Datasets removed", xaxt = "n")
+axis(side = 1, at = c(0,1,2,3), labels = c(0,1,2,3))
+arrows(c(0,1,2,3), c(full.mean - full.sem, agg.mean[2:4,6] - agg.sem[2:4,6]), c(0,1,2,3), c(full.mean + full.sem, agg.mean[2:4,6] + agg.sem[2:4,6]), angle = 90, code = 3, length = 0.05)
