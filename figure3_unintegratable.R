@@ -15,6 +15,7 @@ library(patchwork)
 library(data.table)
 library(HGC)
 library(edgeR)
+library(ComplexHeatmap)
 library(reticulate)
 use_virtualenv("PythonEnv/scVI_new/")
 
