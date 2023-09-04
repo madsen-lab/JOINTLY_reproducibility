@@ -21,7 +21,7 @@ library(presto)
 source("functions.R")
 
 ## Import pancreas data
-dataset <- readRDS("/work/NMF_project/adipose/emont.rds")
+dataset <- readRDS("data/Adipose/raw/Emont/emont.rds")
 dataset[["SCT"]] <- NULL
 dataset[["integrated"]] <- NULL
 dataset <- subset(dataset, tissue == "adipose")
@@ -33,7 +33,7 @@ proc <- preprocess(dataset, "individual")
 cpca <- cpca(proc, bpparam = MulticoreParam())
 inputs <- prepareData(cpca$cpca)
 solved <- JOINTLYsolve(inputs$kernels, inputs$snn, inputs$rareity, cpca, bpparam = BiocParallel::MulticoreParam())
-saveRDS(solved, "/work/NMF_project/Final_datasets/Interpretation/jointly.Rds")
+saveRDS(solved, "data/Interpretation/jointly.Rds")
 
 
 ## Embed using the H matrix
@@ -74,7 +74,7 @@ for (i in 1:15) {
   modules[[length(modules)+1]] <- names(sort(W.sum[,i], decreasing = TRUE))[1:inflection::uik(y = sort(W.sum[,i], decreasing = TRUE), x = seq(1, nrow(W.sum),1))]
   names(modules)[length(modules)] <- paste("factor_", i, sep="")
 }
-saveRDS(modules, "/work/NMF_project/Final_datasets/Interpretation/modules.Rds")
+saveRDS(modules, "data/Interpretation/modules.Rds")
 
 # Calculate scores
 dataset <- NormalizeData(dataset)
@@ -82,8 +82,8 @@ dataset <- UCell::AddModuleScore_UCell(dataset, features = modules)
 saveRDS(dataset, "/work/NMF_project/Final_datasets/Interpretation/dataset.Rds")
 
 ## Reimport data
-dataset <- readRDS("/work/NMF_project/Final_datasets/Interpretation/dataset.Rds")
-modules <- readRDS("/work/NMF_project/Final_datasets/Interpretation/modules.Rds")
+dataset <- readRDS("data/Interpretation/dataset.Rds")
+modules <- readRDS("data/Interpretation/modules.Rds")
 
 # Cluster the data
 dend <- HGC.dendrogram(G = HGC::SNN.Construction(dataset@reductions$jointly@cell.embeddings))
@@ -101,7 +101,7 @@ dataset@meta.data[ dataset@meta.data$clusters == 6, "label"] <- "Endothelial"
 dataset@meta.data[ dataset@meta.data$clusters == 7, "label"] <- "LEC"
 
 # Save the object
-saveRDS(dataset, "/work/NMF_project/Final_datasets/Interpretation/adipose.rds")
+saveRDS(dataset, "data/Interpretation/adipose.rds")
 
 # Subcluster immune cells
 dataset.subset <- subset(dataset, label == "Immune")
@@ -112,7 +112,7 @@ cpca <- cpca(proc, bpparam = MulticoreParam())
 inputs <- prepareData(cpca$cpca)
 solve.list <- list()
 solved <- JOINTLYsolve(inputs$kernels, inputs$snn, inputs$rareity, cpca, bpparam = BiocParallel::MulticoreParam())
-saveRDS(solved, "/work/NMF_project/Final_datasets/Interpretation/jointly_immune.Rds")
+saveRDS(solved, "data/Interpretation/jointly_immune.Rds")
 
 ## Embed using the H matrix
 H <- t(do.call("cbind",solved$Hmat))
@@ -145,30 +145,22 @@ for (lbl in unique(dataset.subset$label)) {
 }
 
 # Save the object
-saveRDS(dataset, "/work/NMF_project/Final_datasets/Interpretation/adipose.rds")
+saveRDS(dataset, "data/Interpretation/adipose.rds")
 
 ## UMAP
-pdf("/work/NMF_project/Figures/V1/Intepretation_UMAP.pdf", height = 10, width = 10, useDingbats = FALSE)
 DimPlot(dataset, group.by="label", label = TRUE, repel = TRUE)
-dev.off()
 
 ## Integration
-pdf("/work/NMF_project/Figures/V1/Intepretation_UMAP_Individual.pdf", height = 10, width = 100, useDingbats = FALSE)
 DimPlot(dataset, split.by= "individual")
-dev.off()
 
 ## Markers
-pdf("/work/NMF_project/Figures/V1/Intepretation_Markers_DotPlot.pdf", width = 10, height = 10, useDingbats = FALSE)
 DotPlot_scCustom(dataset, features = c("F13A1","SIGLEC1","CSF1R","FCN1","S100A9","COTL1","THEMIS","IL7R","BCL11B","CD1C","FCER1A","CLEC10A","MS4A1","BCL11A","SEL1L3","PDGFRA", "C7", "COL6A3", "PPARG", "PLIN1", "GPAM", "VWF", "PECAM1", "MECOM", "CPA3", "KIT","MS4A2", "GNLY", "CD247", "NKG7", "ACTA2", "MYH11", "MYO1B", "BNC1", "UPK3B", "MSLN", "PROX1","PDPN","FLT4"), group.by="label", x_lab_rotate = TRUE, flip_axes = TRUE, cluster.idents = TRUE)
-dev.off()
 
 ## Factors
 agg <- aggregate(dataset@meta.data[,c("factor_1_UCell","factor_2_UCell","factor_3_UCell","factor_4_UCell","factor_5_UCell","factor_6_UCell","factor_7_UCell","factor_8_UCell","factor_9_UCell","factor_10_UCell","factor_11_UCell","factor_12_UCell","factor_13_UCell","factor_14_UCell","factor_15_UCell")], by = list(dataset$label), FUN="median")
 rownames(agg) <- agg[,1]
 agg <- agg[,-1]
-pdf("/work/NMF_project/Figures/V1/Intepretation_Factor_Heatmap.pdf", width = 10, height = 10, useDingbats = FALSE)
 Heatmap(as.matrix(agg))
-dev.off()
 
 ## Label using enrichR
 dbs <- c("Azimuth_Cell_Types_2021", "CellMarker_Augmented_2021")
@@ -211,13 +203,11 @@ ct_ranks[ ct_ranks$factor == 14, "Label"] <- "Endothelial"
 ct_ranks[ ct_ranks$factor == 15, "Label"] <- "DC/Monocyte/Macrophage"
 ct_ranks$Hit <- 0
 ct_ranks[c(1,6,14,16,21,30,31,39,42,49,60,63,67,71),"Hit"] <- 1
-write.table(ct_ranks, "/work/NMF_project/Final_datasets/Interpretation/celltype_ranks.txt", quote = F, row.names = FALSE, col.names = FALSE)
+write.table(ct_ranks, "data/Interpretation/celltype_ranks.txt", quote = F, row.names = FALSE, col.names = FALSE)
 
 ## Highlight example of factors
 # Feature Plot
-pdf("/work/NMF_project/Figures/V1/Intepretation_Example_Factor_FeaturePlot.pdf", width = 10, height = 10, useDingbats = FALSE)
 FeaturePlot(dataset, "factor_10_UCell", min.cutoff = "q80")
-dev.off()
 
 # Factor 10 is associated to insulin signaling + PI3K-Akt
 dbs <- c("WikiPathway_2021_Human", "KEGG_2021_Human","Reactome_2022")
@@ -227,16 +217,13 @@ enriched$FDR <- p.adjust(enriched$P.value, method = "fdr")
 enriched <- enriched[ enriched$FDR <= 0.05,]
 enriched <- enriched[order(enriched$FDR, decreasing = FALSE),]
 enriched <- enriched[c(1,8,18),]
-pdf("/work/NMF_project/Figures/V1/Intepretation_Example_Factor_Pathways.pdf", width = 10, height = 10, useDingbats = FALSE)
 barplot(-log10(enriched$FDR), las=2, ylab = "-log10 FDR", names = enriched$Term)
-dev.off()
 
 # Compare genders
 par(mfcol=c(1,2))
 adipocytes <- subset(dataset, label == "Adipocyte")@meta.data
 FAP <- subset(dataset, label == "FAP")@meta.data
 
-pdf("/work/NMF_project/Figures/V1/Intepretation_Example_Factor_Genders.pdf", width = 20, height = 10, useDingbats = FALSE)
 adipocytes[ adipocytes$factor_10_UCell >= quantile(adipocytes$factor_10_UCell, quant), "positive"] <- 1
 agg <- aggregate(adipocytes$factor_10_UCell, by = list(adipocytes$individual), FUN="mean")
 freq <- agg$x
@@ -254,7 +241,6 @@ md <- FAP[ duplicated(FAP$individual)==FALSE,]
 md <- md[ match(names(freq), md$individual),]
 md$freq <- freq
 boxplot(freq ~ sex, data = md, ylab="Mean factor 10 signal", names = c("Female","Male"), xlab="Gender", las = 1, main = "FAP")
-dev.off()
 
 #### Compare interpretable factors with DE and between clusters
 # Overall test
@@ -282,18 +268,22 @@ DE.list <- lapply(DE.list, FUN = function(x) { x$marker <- ifelse(x$logFC > 0 & 
 DE.list <- lapply(DE.list, FUN = function(x) { x$module <- ifelse(x$feature %in% unlist(modules), "in", "out"); return(x) } )
 DE.list <- lapply(DE.list, FUN = function(x) { x$batch_consistency <- ifelse(is.na(x$batch_consistency), 0, x$batch_consistency); return(x)})
 
-# Overlap between modules and markers
-jaccard.matrix <- matrix(ncol=13, nrow=15)
+## Overlap between modules and markers
+# Calculate Jaccard index
+jaccard.matrix <- as.data.frame(matrix(ncol=13, nrow=15))
 for (m in 1:15) {
   for (j in 1:13) {
     feats <- DE.list[[j]][ DE.list[[j]]$marker == "yes" & DE.list[[j]]$module == "in" ,"feature"]
     jaccard.matrix[m,j] <- sum(feats %in% modules[[m]]) / (length(modules[[m]]) + length(feats) - sum(feats %in% modules[[m]]))
+    colnames(jaccard.matrix)[j] <- unique(DE.list[[j]]$group)
+    rownames(jaccard.matrix)[m] <- names(modules)[m]
   }
 }
-pdf("/work/NMF_project/Figures/V4/modules_markers_heatmap.pdf", width = 10, height = 10, useDingbats = FALSE)
-Heatmap(jaccard.matrix, cluster_columns = FALSE, cluster_rows = FALSE)
-dev.off()
 
+# Plot it
+Heatmap(jaccard.matrix, cluster_columns = FALSE, cluster_rows = FALSE)
+
+# Calculate average AUCs
 marker.module.auc <- marker.notmodule.auc <- notmarker.module.auc <- notmarker.notmodule.auc <- marker.module.cons <- marker.notmodule.cons <- c() 
 for (m in 1:13) {
   j <- which.max(jaccard.matrix[,m])
@@ -304,17 +294,15 @@ for (m in 1:13) {
   marker.module.cons <- c(marker.module.cons, median(DE.list[[m]][ DE.list[[m]]$marker == "yes" & DE.list[[m]]$feature %in% modules[[j]], "batch_consistency"]))
   marker.notmodule.cons <- c(marker.notmodule.cons, median(DE.list[[m]][ DE.list[[m]]$marker == "yes" & !(DE.list[[m]]$feature %in% modules[[j]]), "batch_consistency"]))
 }
-pdf("/work/NMF_project/Figures/V4/modules_markers_boxplots.pdf", width = 20, height = 10, useDingbats = FALSE)
+
+# Plot it
 par(mfcol=c(1,2))
 boxplot(marker.module.auc, marker.notmodule.auc, notmarker.module.auc, notmarker.notmodule.auc, las = 1, ylab = "Median AUC per cell type", names = c("A","B","C","D"))
 boxplot(marker.module.cons, marker.notmodule.cons, las = 1, ylab = "Median AUC per cell type", names = c("A","B"), ylim=c(0,1))
 dev.off()
 
-
-
-
 ### Time-courses
-path <- "/work/NMF_project/Final_datasets/Differentiation/gastrulation.h5ad"
+path <- "data/Differentiation/gastrulation.h5ad"
 root <- rhdf5::H5Fopen(path)
 target <- "/X"
 i_path <- paste0(target,"/indices")
@@ -369,7 +357,7 @@ for (rep in 1:5) {
   rm(H)
 }
 seu <- RunUMAP(seu, reduction = "JOINTLY_rep5", dims = 1:15, reduction.name = "JOINTLY_umap")
-saveRDS(seu, "/work/NMF_project/Final_datasets/Differentiation/gastrulation.Rds")
+saveRDS(seu, "data/Differentiation/gastrulation.Rds")
 
 # Scale the factors
 W <- solved$Wmat
@@ -400,16 +388,14 @@ for (i in 1:15) {
   modules[[length(modules)+1]] <- names(sort(W.sum[,i], decreasing = TRUE))[1:inflection::uik(y = sort(W.sum[,i], decreasing = TRUE), x = seq(1, nrow(W.sum),1))]
   names(modules)[length(modules)] <- paste("factor_", i, sep="")
 }
-saveRDS(modules, "/work/NMF_project/Final_datasets/Differentiation/modules.Rds")
+saveRDS(modules, "data/Differentiation/modules.Rds")
 
 # Calculate scores
 seu <- NormalizeData(seu)
 seu <- UCell::AddModuleScore_UCell(seu, features = modules)
-saveRDS(seu, "/work/NMF_project/Final_datasets/Interpretation/gastrulation.Rds")
+saveRDS(seu, "data/Interpretation/gastrulation.Rds")
 
-pdf("/work/NMF_project/Figures/V4/Differentiation_UMAP.pdf", width = 10, height = 40, useDingbats = FALSE)
 FeaturePlot(seu, reduction = "JOINTLY_umap", "latent_time") + DimPlot(seu, reduction = "JOINTLY_umap", group.by="celltype") + FeaturePlot(seu, reduction = "umap", "latent_time") + DimPlot(seu, reduction = "umap", group.by="celltype")
-dev.off()
 
 agg <- aggregate(seu@meta.data[,11:25], by =list(cut(seu@meta.data$latent_time, breaks = 50)), FUN="mean")
 for (i in 2:ncol(agg)) { agg[,i] <- (agg[,i] - max(agg[,i])) / (min(agg[,i]) - max(agg[,i])) }
@@ -432,7 +418,6 @@ late_enriched <- enrichr(late, dbs)
 temp_enriched <- enrichr(temp, dbs)
 
 # Extract
-pdf("/work/NMF_project/Figures/V4/Differentiation_Pathways.pdf", width = 50, height = 10, useDingbats = FALSE)
 par(mfcol=c(1,5))
 term <- "Insulin Signaling WP65"
 idx <- 2
@@ -481,4 +466,3 @@ barplot(c(
   ifelse(identical(numeric(0), mid_early_enriched[[idx]][ mid_early_enriched[[idx]][,1] == term,]$Combined.Score),0,mid_early_enriched[[idx]][ mid_early_enriched[[idx]][,1] == term,]$Combined.Score),
   ifelse(identical(numeric(0), mid_late_enriched[[idx]][ mid_late_enriched[[idx]][,1] == term,]$Combined.Score),0,mid_late_enriched[[idx]][ mid_late_enriched[[idx]][,1] == term,]$Combined.Score),
   ifelse(identical(numeric(0), late_enriched[[idx]][ late_enriched[[idx]][,1] == term,]$Combined.Score),0,late_enriched[[idx]][ late_enriched[[idx]][,1] == term,]$Combined.Score)), las = 1, ylab="Combined score", main = "Heme Biosynthesis", names = c("Early","Temporary","Early mid", "Late mid","Late"))
-dev.off()
