@@ -2,6 +2,9 @@
 ## Options
 options(future.globals.maxSize= 20000*1024^2)
 
+## Dependencies
+source("dependencies.R")
+
 ## Libraries
 library(Seurat)
 library(JOINTLY)
@@ -13,6 +16,9 @@ library(enrichR)
 library(ComplexHeatmap)
 library(HGC)
 library(presto)
+
+## Functions
+source("functions.R")
 
 ## Import pancreas data
 dataset <- readRDS("/work/NMF_project/adipose/emont.rds")
