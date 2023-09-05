@@ -414,7 +414,7 @@ dataset <- subset(dataset, transfer_label != "")
 dataset <- subset(dataset, transfer_label %in% names(which(table(dataset$transfer_label) >= 10)))
 
 ## LISI and ASW
-global_cLISI <- global_iLISI <- global_bASW <- global_cASW <- c()
+global_cLISI <- global_iLISI <- global_bASW <- global_cASW <- global_ARI <- c()
 md.subset <- dataset@meta.data
 
 # LISI
@@ -443,15 +443,34 @@ for (i in 1:5) {
   sil <- cluster::silhouette(as.numeric(factor(md.subset[,"transfer_label"], labels = seq(length(unique(md.subset[,"transfer_label"]))))), dmatrix = dist.mat, do.col.sort = FALSE)
   sil <- sil[,"sil_width"]
   global_cASW <- c(global_cASW, mean((sil + 1) / 2))
+  
+  # ARI
+  dend <- HGC.dendrogram(G = HGC::SNN.Construction(dataset[[paste("JOINTLY_rep",i, sep="")]]@cell.embeddings[,1:15]))
+  aris <- c()
+  for (cl in seq(1, 50, 1)) {
+    # Cluster
+    if (cl == 1) {
+      clusters <- rep(1, nrow(md.subset))
+      names(clusters) <- rownames(md.subset)
+    } else {
+      clusters <- cutree(dend, k = cl)
+      names(clusters) <- rownames(md.subset)
+    }
+
+    # Capture the ARI
+    aris <- c(aris, aricode::ARI(clusters, factor(md.subset[,"transfer_label"])))
+  }
+  global_ARI <- c(global_ARI, max(aris))
 }
 
 # Results
 results[results.counter,1] <- 0
 results[results.counter,2] <- "None"
-results[results.counter,3] <- global_iLISI[ which.max(global_iLISI)]
-results[results.counter,4] <- global_cLISI[ which.max(global_iLISI)]
-results[results.counter,5] <- global_bASW[ which.max(global_iLISI)]
-results[results.counter,6] <- global_cASW[ which.max(global_iLISI)]
+results[results.counter,3] <- global_ARI[ which.max(global_ARI)]
+results[results.counter,4] <- global_iLISI[ which.max(global_ARI)]
+results[results.counter,5] <- global_cLISI[ which.max(global_ARI)]
+results[results.counter,6] <- global_bASW[ which.max(global_ARI)]
+results[results.counter,7] <- global_cASW[ which.max(global_ARI)]
 results.counter <- results.counter + 1
 
 ## Subsets
@@ -466,7 +485,7 @@ for (obj in tracking[ tracking[,1] == file,2]) {
   dataset.subset <- subset(dataset.subset, transfer_label %in% names(which(table(dataset$transfer_label) >= 10)))
   
   ## LISI and ASW
-  global_cLISI <- global_iLISI <- global_bASW <- global_cASW <- c()
+  global_cLISI <- global_iLISI <- global_bASW <- global_cASW <- global_ARI <- c()
   md.subset <- dataset.subset@meta.data
   for (i in 1:5) {
     # LISI
@@ -494,15 +513,34 @@ for (obj in tracking[ tracking[,1] == file,2]) {
     sil <- cluster::silhouette(as.numeric(factor(md.subset[,"transfer_label"], labels = seq(length(unique(md.subset[,"transfer_label"]))))), dmatrix = dist.mat, do.col.sort = FALSE)
     sil <- sil[,"sil_width"]
     global_cASW <- c(global_cASW, mean((sil + 1) / 2))
+    
+    # ARI
+    dend <- HGC.dendrogram(G = HGC::SNN.Construction(dataset.subset[[paste("JOINTLY_rep",i, sep="")]]@cell.embeddings[,1:15]))
+    aris <- c()
+    for (cl in seq(1, 50, 1)) {
+      # Cluster
+      if (cl == 1) {
+        clusters <- rep(1, nrow(md.subset))
+        names(clusters) <- rownames(md.subset)
+      } else {
+        clusters <- cutree(dend, k = cl)
+        names(clusters) <- rownames(md.subset)
+      }
+      
+      # Capture the ARI
+      aris <- c(aris, aricode::ARI(clusters, factor(md.subset[,"transfer_label"])))
+    }
+    global_ARI <- c(global_ARI, max(aris))
   }
   
   # Record results
   results[results.counter,1] <- tracking[ tracking[,2] == obj,3]
   results[results.counter,2] <- tracking[ tracking[,2] == obj,4]
-  results[results.counter,3] <- global_iLISI[ which.max(global_iLISI)]
-  results[results.counter,4] <- global_cLISI[ which.max(global_iLISI)]
-  results[results.counter,5] <- global_bASW[ which.max(global_iLISI)]
-  results[results.counter,6] <- global_cASW[ which.max(global_iLISI)]
+  results[results.counter,3] <- global_ARI[ which.max(global_ARI)]
+  results[results.counter,4] <- global_iLISI[ which.max(global_ARI)]
+  results[results.counter,5] <- global_cLISI[ which.max(global_ARI)]
+  results[results.counter,6] <- global_bASW[ which.max(global_ARI)]
+  results[results.counter,7] <- global_cASW[ which.max(global_ARI)]
   results.counter <- results.counter + 1
   print(results.counter)
 }
@@ -524,7 +562,7 @@ for (q in (1:5)[-reference.set]) {
   }
   overlap.score <- c(overlap.score, hits / (nrow(subs.nn) * 30))
 }
-results[1,7] <- max(overlap.score)
+results[1,8] <- max(overlap.score)
 
 # Loop across different reference.sets
 full.overlap <- c()
@@ -576,36 +614,40 @@ for (obj in tracking[ tracking[,1] == file,2]) {
     }
     overlap.score <- c(overlap.score, hits / (nrow(subs.nn) * 30))
   }
-  results[ results[,2] == tracking[ tracking[,2] == obj,4],7] <- max(overlap.score)
+  results[ results[,2] == tracking[ tracking[,2] == obj,4],8] <- max(overlap.score)
   print(obj)
 }
 
 ## Calculate averages and SEMs
-agg.mean <- aggregate(results[,c(3,4,5,6,7)], by = list(results[,1]), FUN="mean")
-agg.sem <- aggregate(results[,c(3,4,5,6,7)], by = list(results[,1]), FUN="sd")
-agg.sem[2,2:6] <- agg.sem[2,2:6] / sqrt(nrow(results[ results[,1] == 1,]))
-agg.sem[3,2:6] <- agg.sem[3,2:6] / sqrt(nrow(results[ results[,1] == 2,]))
-agg.sem[4,2:6] <- agg.sem[4,2:6] / sqrt(nrow(results[ results[,1] == 3,]))
-agg.sem[4,2:6] <- agg.sem[4,2:6] / sqrt(nrow(results[ results[,1] == 3,]))
+agg.mean <- aggregate(results[,c(3,4,5,6,7,8)], by = list(results[,1]), FUN="mean")
+agg.sem <- aggregate(results[,c(3,4,5,6,7,8)], by = list(results[,1]), FUN="sd")
+agg.sem[2,2:7] <- agg.sem[2,2:7] / sqrt(nrow(results[ results[,1] == 1,]))
+agg.sem[3,2:7] <- agg.sem[3,2:7] / sqrt(nrow(results[ results[,1] == 2,]))
+agg.sem[4,2:7] <- agg.sem[4,2:7] / sqrt(nrow(results[ results[,1] == 3,]))
+agg.sem[4,2:7] <- agg.sem[4,2:7] / sqrt(nrow(results[ results[,1] == 3,]))
 
 ## Plots
-par(mfcol=c(1,5))
-plot(x = c(0,1,2,3), y = agg.mean[,2], ylim=c(0,1), type="o", las = 2, ylab="Global iLISI", pch=16, xlab= "# Datasets removed", xaxt = "n")
+par(mfcol=c(1,6))
+plot(x = c(0,1,2,3), y = agg.mean[,2], ylim=c(0,1), type="o", las = 2, ylab="ARI", pch=16, xlab= "# Datasets removed", xaxt = "n")
 axis(side = 1, at = c(0,1,2,3), labels = c(0,1,2,3))
 arrows(c(0,1,2,3), agg.mean[,2] - agg.sem[,2], c(0,1,2,3), agg.mean[,2] + agg.sem[,2], angle = 90, code = 3, length = 0.05)
 
-plot(x = c(0,1,2,3), y = agg.mean[,4], ylim=c(0,1), type="o", las = 2, ylab="Global bASW", pch=16, xlab= "# Datasets removed", xaxt = "n")
-axis(side = 1, at = c(0,1,2,3), labels = c(0,1,2,3))
-arrows(c(0,1,2,3), agg.mean[,4] - agg.sem[,4], c(0,1,2,3), agg.mean[,4] + agg.sem[,4], angle = 90, code = 3, length = 0.05)
-
-plot(x = c(0,1,2,3), y = agg.mean[,3], ylim=c(0,1), type="o", las = 2, ylab="Global cLISI", pch=16, xlab = "# Datasets removed", xaxt = "n")
+plot(x = c(0,1,2,3), y = agg.mean[,3], ylim=c(0,1), type="o", las = 2, ylab="Global iLISI", pch=16, xlab= "# Datasets removed", xaxt = "n")
 axis(side = 1, at = c(0,1,2,3), labels = c(0,1,2,3))
 arrows(c(0,1,2,3), agg.mean[,3] - agg.sem[,3], c(0,1,2,3), agg.mean[,3] + agg.sem[,3], angle = 90, code = 3, length = 0.05)
 
-plot(x = c(0,1,2,3), y = agg.mean[,5], ylim=c(0,1), type="o", las = 2, ylab="Global cASW", pch=16, xlab = "# Datasets removed", xaxt = "n")
+plot(x = c(0,1,2,3), y = agg.mean[,5], ylim=c(0,1), type="o", las = 2, ylab="Global bASW", pch=16, xlab= "# Datasets removed", xaxt = "n")
 axis(side = 1, at = c(0,1,2,3), labels = c(0,1,2,3))
 arrows(c(0,1,2,3), agg.mean[,5] - agg.sem[,5], c(0,1,2,3), agg.mean[,5] + agg.sem[,5], angle = 90, code = 3, length = 0.05)
 
-plot(x = c(0,1,2,3), y = c(full.mean, agg.mean[2:4,6]), ylim=c(0,1), type="o", las = 2, ylab="Neighborhood preservation", pch=16, xlab = "# Datasets removed", xaxt = "n")
+plot(x = c(0,1,2,3), y = agg.mean[,4], ylim=c(0,1), type="o", las = 2, ylab="Global cLISI", pch=16, xlab = "# Datasets removed", xaxt = "n")
 axis(side = 1, at = c(0,1,2,3), labels = c(0,1,2,3))
-arrows(c(0,1,2,3), c(full.mean - full.sem, agg.mean[2:4,6] - agg.sem[2:4,6]), c(0,1,2,3), c(full.mean + full.sem, agg.mean[2:4,6] + agg.sem[2:4,6]), angle = 90, code = 3, length = 0.05)
+arrows(c(0,1,2,3), agg.mean[,4] - agg.sem[,4], c(0,1,2,3), agg.mean[,4] + agg.sem[,4], angle = 90, code = 3, length = 0.05)
+
+plot(x = c(0,1,2,3), y = agg.mean[,6], ylim=c(0,1), type="o", las = 2, ylab="Global cASW", pch=16, xlab = "# Datasets removed", xaxt = "n")
+axis(side = 1, at = c(0,1,2,3), labels = c(0,1,2,3))
+arrows(c(0,1,2,3), agg.mean[,6] - agg.sem[,6], c(0,1,2,3), agg.mean[,6] + agg.sem[,6], angle = 90, code = 3, length = 0.05)
+
+plot(x = c(0,1,2,3), y = c(full.mean, agg.mean[2:4,7]), ylim=c(0,1), type="o", las = 2, ylab="Neighborhood preservation", pch=16, xlab = "# Datasets removed", xaxt = "n")
+axis(side = 1, at = c(0,1,2,3), labels = c(0,1,2,3))
+arrows(c(0,1,2,3), c(full.mean - full.sem, agg.mean[2:4,7] - agg.sem[2:4,7]), c(0,1,2,3), c(full.mean + full.sem, agg.mean[2:4,7] + agg.sem[2:4,7]), angle = 90, code = 3, length = 0.05)
