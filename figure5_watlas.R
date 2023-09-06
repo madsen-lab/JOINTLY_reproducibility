@@ -19,6 +19,8 @@ library(emmeans)
 library(BisqueRNA)
 library(recount3)
 library(compositions)
+library(ComplexHeatmap)
+library(edgeR)
 
 ## Functions
 source("functions.R")
@@ -1328,6 +1330,265 @@ ggplot(data = results_l2[ results_l2$Variable == "Gender",], aes(x = Difference,
 
 ## Tables
 writexl::write_xlsx(results_l2, "/work/NMF_project/Figures/V3/Supplementary_Table_Composition_L2.xlsx")
+
+
+#### Heatmaps
+### Adipocyte marker genes
+WATLAS$labels.new <- WATLAS$labels.l2
+WATLAS@meta.data[ WATLAS@meta.data$labels.l1 != "Adipocyte","labels.new"] <- "Other"
+WATLAS$id <- paste(WATLAS$labels.new, WATLAS$depot, sep="_")
+ids <- unique(WATLAS$id)
+pb <- as.data.frame(matrix(ncol=1, nrow=nrow(WATLAS)))
+for (i in 1:length(ids)) {
+  pb[,i] <- rowMeans(WATLAS@assays$RNA@data[,colnames(WATLAS@assays$RNA@data) %in% names(which(WATLAS$id == ids[i]))])
+}
+rownames(pb) <- rownames(WATLAS)
+colnames(pb) <- ids
+Heatmap(t(scale(t(pb[ rownames(pb) %in% c("LPL","ACSL1","PPARG","LIPE","PLIN4","DGAT2","DGAT1","PLIN1","LEP","CD36"),]))), cluster_columns = FALSE, cluster_rows = FALSE)   
+
+### Adipocyte modules
+## Subset to only adipocytes from Emont and Baboza et al.
+ad <- subset(WATLAS, labels.l1 == "Adipocyte")
+ad <- subset(ad, orig.ident %in% c("Emont","Baboza"))
+ad$id <- paste(ad$labels.l2, ad$depot, ad$sample, sep="_")
+ids <- unique(ad$id)
+
+## Calculate pseudo-bulk and save metadata
+pb <- as.data.frame(matrix(ncol=1, nrow=nrow(ad)))
+md <- as.data.frame(matrix(ncol=5, nrow=1))
+counter <- 1
+for (i in 1:length(ids)) {
+  if (table(ad$id)[names(table(ad$id)) == ids[i]] >= 5) {
+    pb[,counter] <- rowSums(ad@assays$RNA@counts[,colnames(ad@assays$RNA@counts) %in% names(which(ad$id == ids[i]))])
+    colnames(pb)[counter] <- ids[i]
+    md[counter,1] <- ids[i]
+    md[counter,2] <- unique(ad@meta.data[ ad@meta.data$id == ids[i],"orig.ident"])
+    md[counter,3] <- unique(ad@meta.data[ ad@meta.data$id == ids[i],"sample"])
+    md[counter,4] <- unique(ad@meta.data[ ad@meta.data$id == ids[i],"depot"])
+    md[counter,5] <- unique(ad@meta.data[ ad@meta.data$id == ids[i],"labels.l2"])
+    counter <- counter + 1
+  }
+}
+rownames(pb) <- rownames(ad)
+
+## Filter genes
+keep <- intersect(names(which(rowSums(ad@assays$RNA@counts[,colnames(ad@assays$RNA@counts) %in% rownames(ad@meta.data[ ad@meta.data$orig.ident == "Emont",])] > 0) >= 20)), names(which(rowSums(ad@assays$RNA@counts[,colnames(ad@assays$RNA@counts) %in% rownames(ad@meta.data[ ad@meta.data$orig.ident == "Baboza",])] > 0) >= 20)))
+pb <- pb[ rownames(pb) %in% keep,]
+keep <- filterByExpr(pb[ ,colnames(pb) %in% md[ md$V2 == "Emont", "V1"]], group = md[ md$V2 == "Emont", "V5"])
+pb.subset <- pb[ keep,]
+keep <- filterByExpr(pb[ ,colnames(pb) %in% md[ md$V2 != "Emont", "V1"]], group = md[ md$V2 != "Emont", "V5"])
+pb.subset <- pb.subset[ rownames(pb.subset) %in% rownames(pb)[keep],]
+mm <- model.matrix(~ factor(md$V5) + factor(md$V4) + factor(md$V2) + 0)
+
+## Estimate dispersions and fit a glm model
+DGE <- DGEList(counts = pb.subset, group = md$V5)
+DGE <- calcNormFactors(DGE)
+DGE <- estimateDisp(DGE, design = mm)
+fit <- glmFit(DGE,mm)
+
+## CLSTN2+ adipocytes
+# Pairwise tests
+testA <- glmLRT(fit, contrast = c(1,-1,0,0,0,0))
+testB <- glmLRT(fit, contrast = c(1,0,-1,0,0,0))
+testC <- glmLRT(fit, contrast = c(1,0,0,-1,0,0))
+testD <- glmLRT(fit, contrast = c(1,-1/3,-1/3,-1/3,0,0))
+testA <- as.data.frame(topTags(testA, n = nrow(pb.subset), sort.by = "none"))
+testB <- as.data.frame(topTags(testB, n = nrow(pb.subset), sort.by = "none"))
+testC <- as.data.frame(topTags(testC, n = nrow(pb.subset), sort.by = "none"))
+testD <- as.data.frame(topTags(testD, n = nrow(pb.subset), sort.by = "none"))
+testD <- testD[ testD$FDR <= 0.05 & testD$logFC >= log2(1.5),]
+testD <- testD[ rownames(testD) %in% rownames(testA)[ testA$logFC >= log2(1.3)],]
+testD <- testD[ rownames(testD) %in% rownames(testB)[ testB$logFC >= log2(1.3)],]
+testD <- testD[ rownames(testD) %in% rownames(testC)[ testC$logFC >= log2(1.3)],]
+testD <- rownames(testD)
+
+# Normalized expression values
+norm <- as.data.frame(cpm(DGE, normalized.lib.sizes = TRUE, log = TRUE, prior.count = 1))
+norm <- norm[ , order(md$V5, md$V2, md$V4)]
+norm <- norm[ rownames(norm) %in% testD,]
+norm <- removeBatchEffect(norm, batch = md$V4, batch2 = md$V2, design = model.matrix(~ factor(md$V5)))
+norm <- t(scale(t(norm)))
+
+# Setup and plot a heatmap
+mod1 <- rownames(norm)
+highlights <- c("CLSTN2","PGAP1", "ACER2", "LEPR", "ENPP1","CBLB","KSR1","CFAP69") #hAd5 from Emont et al.
+htm1 <- Heatmap(t(as.matrix(norm)), cluster_columns = TRUE, cluster_rows = FALSE, left_annotation = rowAnnotation(Study = md[ order(md$V5, md$V2, md$V4), "V2"], Depot = md[ order(md$V5, md$V2, md$V4), "V4"]), top_annotation = HeatmapAnnotation(foo = anno_mark(at = which(rownames(norm) %in% highlights), labels = rownames(norm)[which(rownames(norm) %in% highlights)])), show_column_names = FALSE, show_column_dend = FALSE)
+
+## DCN+ adipocytes
+# Pairwise tests
+testA <- glmLRT(fit, contrast = c(-1,1,0,0,0,0))
+testB <- glmLRT(fit, contrast = c(0,1,-1,0,0,0))
+testC <- glmLRT(fit, contrast = c(0,1,0,-1,0,0))
+testD <- glmLRT(fit, contrast = c(-1/3,1,-1/3,-1/3,0,0))
+testA <- as.data.frame(topTags(testA, n = nrow(pb.subset), sort.by = "none"))
+testB <- as.data.frame(topTags(testB, n = nrow(pb.subset), sort.by = "none"))
+testC <- as.data.frame(topTags(testC, n = nrow(pb.subset), sort.by = "none"))
+testD <- as.data.frame(topTags(testD, n = nrow(pb.subset), sort.by = "none"))
+testD <- testD[ testD$FDR <= 0.05 & testD$logFC >= log2(1.5),]
+testD <- testD[ rownames(testD) %in% rownames(testA)[ testA$logFC >= log2(1.3)],]
+testD <- testD[ rownames(testD) %in% rownames(testB)[ testB$logFC >= log2(1.3)],]
+testD <- testD[ rownames(testD) %in% rownames(testC)[ testC$logFC >= log2(1.3)],]
+testD <- rownames(testD)
+
+# Normalized expression values
+norm <- as.data.frame(cpm(DGE, normalized.lib.sizes = TRUE, log = TRUE, prior.count = 1))
+norm <- norm[ , order(md$V5, md$V2, md$V4)]
+norm <- norm[ rownames(norm) %in% testD,]
+norm <- removeBatchEffect(norm, batch = md$V4, batch2 = md$V2, design = model.matrix(~ factor(md$V5)))
+norm <- t(scale(t(norm)))
+
+# Setup and plot a heatmap
+mod2 <- rownames(norm)
+highlights <- c("DCN","CXCL14","COL1A2","APOD","CFD","COL6A3","LUM")
+htm2 <- Heatmap(t(as.matrix(norm)), cluster_columns = TRUE, cluster_rows = FALSE, left_annotation = rowAnnotation(Study = md[ order(md$V5, md$V2, md$V4), "V2"], Depot = md[ order(md$V5, md$V2, md$V4), "V4"]), top_annotation = HeatmapAnnotation(foo = anno_mark(at = which(rownames(norm) %in% highlights), labels = rownames(norm)[which(rownames(norm) %in% highlights)])), show_column_names = FALSE, show_column_dend = FALSE)
+
+## DGAT2+ adipocytes
+# Pairwise tests
+testA <- glmLRT(fit, contrast = c(-1,0,1,0,0,0))
+testB <- glmLRT(fit, contrast = c(0,-1,1,0,0,0))
+testC <- glmLRT(fit, contrast = c(0,0,1,-1,0,0))
+testD <- glmLRT(fit, contrast = c(-1/3,-1/3,1,-1/3,0,0))
+testA <- as.data.frame(topTags(testA, n = nrow(pb.subset), sort.by = "none"))
+testB <- as.data.frame(topTags(testB, n = nrow(pb.subset), sort.by = "none"))
+testC <- as.data.frame(topTags(testC, n = nrow(pb.subset), sort.by = "none"))
+testD <- as.data.frame(topTags(testD, n = nrow(pb.subset), sort.by = "none"))
+testD <- testD[ testD$FDR <= 0.05 & testD$logFC >= log2(1.5),]
+testD <- testD[ rownames(testD) %in% rownames(testA)[ testA$logFC >= log2(1.3)],]
+testD <- testD[ rownames(testD) %in% rownames(testB)[ testB$logFC >= log2(1.3)],]
+testD <- testD[ rownames(testD) %in% rownames(testC)[ testC$logFC >= log2(1.3)],]
+testD <- rownames(testD)
+
+# Normalized expression values
+norm <- as.data.frame(cpm(DGE, normalized.lib.sizes = TRUE, log = TRUE, prior.count = 1))
+norm <- norm[ , order(md$V5, md$V2, md$V4)]
+norm <- norm[ rownames(norm) %in% testD,]
+norm <- removeBatchEffect(norm, batch = md$V4, batch2 = md$V2, design = model.matrix(~ factor(md$V5)))
+norm <- t(scale(t(norm)))
+
+# Setup and plot a heatmap
+mod3 <- rownames(norm)
+highlights <- c("DGAT2","GPAM","MOGAT1","ENPP3","GYS2","FGFR2","FGF13","PRKCD","CDH20","CADM1") #hAd4 from Emont et al.
+htm3 <- Heatmap(t(as.matrix(norm)), cluster_columns = TRUE, cluster_rows = FALSE, left_annotation = rowAnnotation(Study = md[ order(md$V5, md$V2, md$V4), "V2"], Depot = md[ order(md$V5, md$V2, md$V4), "V4"]), top_annotation = HeatmapAnnotation(foo = anno_mark(at = which(rownames(norm) %in% highlights), labels = rownames(norm)[which(rownames(norm) %in% highlights)])), show_column_names = FALSE, show_column_dend = FALSE)
+
+## PRSS23+ adipocytes
+# Pairwise tests
+testA <- glmLRT(fit, contrast = c(-1,0,0,1,0,0))
+testB <- glmLRT(fit, contrast = c(0,-1,0,1,0,0))
+testC <- glmLRT(fit, contrast = c(0,0,-1,1,0,0))
+testD <- glmLRT(fit, contrast = c(-1/3,-1/3,-1/3,1,0,0))
+testA <- as.data.frame(topTags(testA, n = nrow(pb.subset), sort.by = "none"))
+testB <- as.data.frame(topTags(testB, n = nrow(pb.subset), sort.by = "none"))
+testC <- as.data.frame(topTags(testC, n = nrow(pb.subset), sort.by = "none"))
+testD <- as.data.frame(topTags(testD, n = nrow(pb.subset), sort.by = "none"))
+testD <- testD[ testD$FDR <= 0.05 & testD$logFC >= log2(1.5),]
+testD <- testD[ rownames(testD) %in% rownames(testA)[ testA$logFC >= log2(1.3)],]
+testD <- testD[ rownames(testD) %in% rownames(testB)[ testB$logFC >= log2(1.3)],]
+testD <- testD[ rownames(testD) %in% rownames(testC)[ testC$logFC >= log2(1.3)],]
+testD <- rownames(testD)
+
+# Normalized expression values
+norm <- as.data.frame(cpm(DGE, normalized.lib.sizes = TRUE, log = TRUE, prior.count = 1))
+norm <- norm[ , order(md$V5, md$V2, md$V4)]
+norm <- norm[ rownames(norm) %in% testD,]
+norm <- removeBatchEffect(norm, batch = md$V4, batch2 = md$V2, design = model.matrix(~ factor(md$V5)))
+norm <- t(scale(t(norm)))
+
+# Setup and plot a heatmap
+mod4 <- rownames(norm)
+highlights <- c("PRSS23", "PDE5A", "ADIPOQ-AS1","SULT1C3","SULT2B1","SULT1C2","SULT1C4","GRIN2A","GRIN3A","GRIN2C") #hAd 3 from Emont
+htm4 <- Heatmap(t(as.matrix(norm)), cluster_columns = TRUE, cluster_rows = FALSE, left_annotation = rowAnnotation(Study = md[ order(md$V5, md$V2, md$V4), "V2"], Depot = md[ order(md$V5, md$V2, md$V4), "V4"]), top_annotation = HeatmapAnnotation(foo = anno_mark(at = which(rownames(norm) %in% highlights), labels = rownames(norm)[which(rownames(norm) %in% highlights)])), show_column_names = FALSE, show_column_dend = FALSE)
+
+## Plot the combined heatmap
+htm1 + htm2 + htm3 + htm4
+
+### Calculate module scores, setup for heatmap and plot it
+ad <- UCell::AddModuleScore_UCell(ad, features = list(mod1 = mod1, mod2 = mod2, mod3 = mod3, mod4 = mod4))
+md.full <- ad@meta.data
+md.full$id <- paste(md.full$labels.l2, md.full$depot, md.full$orig.ident, sep="_")
+md.full$mod1_UCell <- scale(md.full$mod1_UCell)
+md.full$mod2_UCell <- scale(md.full$mod2_UCell)
+md.full$mod3_UCell <- scale(md.full$mod3_UCell)
+md.full$mod4_UCell <- scale(md.full$mod4_UCell)
+modules <- aggregate(md.full[,c("mod1_UCell", "mod2_UCell", "mod3_UCell","mod4_UCell")], by = list(md.full$id), FUN="median")
+rownames(modules) <- modules[,1]
+modules <- modules[,-1]
+Heatmap(as.matrix(modules), cluster_rows = FALSE, cluster_columns = FALSE)
+
+### Adipocyte depots
+# CLSTN2+ adipocytes
+depot.counts <- pb.subset[,grep("CLSTN", colnames(pb.subset))]
+depot.md <- md[match(colnames(depot.counts), md[,1]),]
+mm <- model.matrix(~ factor(depot.md$V2) + factor(depot.md$V4))
+DGE <- DGEList(counts = depot.counts, group = depot.md$V4)
+DGE <- calcNormFactors(DGE)
+DGE <- estimateDisp(DGE, design = mm)
+fit <- glmFit(DGE,mm)
+test <- glmLRT(fit, coef = "factor(depot.md$V4)VAT")
+test <- as.data.frame(topTags(test, n = nrow(depot.counts), sort.by = "none"))
+test <- test[ test$FDR <= 0.05 & abs(test$logFC) >= log2(1.5),]
+norm_clstn <- as.data.frame(cpm(DGE, normalized.lib.sizes = TRUE, log = TRUE, prior.count = 1))
+norm_clstn <- removeBatchEffect(norm_clstn, batch = depot.md$V2, design = model.matrix(~ factor(depot.md$V4)))
+norm_clstn <- t(scale(t(norm_clstn)))
+genes_clstn <- rownames(test)
+
+# DGAT2+ adipocytes
+depot.counts <- pb.subset[,grep("DGAT", colnames(pb.subset))]
+depot.md <- md[match(colnames(depot.counts), md[,1]),]
+mm <- model.matrix(~ factor(depot.md$V2) + factor(depot.md$V4))
+DGE <- DGEList(counts = depot.counts, group = depot.md$V4)
+DGE <- calcNormFactors(DGE)
+DGE <- estimateDisp(DGE, design = mm)
+fit <- glmFit(DGE,mm)
+test <- glmLRT(fit, coef = "factor(depot.md$V4)VAT")
+test <- as.data.frame(topTags(test, n = nrow(depot.counts), sort.by = "none"))
+test <- test[ test$FDR <= 0.05 & abs(test$logFC) >= log2(1.5),]
+norm_dgat <- as.data.frame(cpm(DGE, normalized.lib.sizes = TRUE, log = TRUE, prior.count = 1))
+norm_dgat <- removeBatchEffect(norm_dgat, batch = depot.md$V2, design = model.matrix(~ factor(depot.md$V4)))
+norm_dgat <- t(scale(t(norm_dgat)))
+genes_dgat <- rownames(test)
+
+# PRSS23+ adipocytes
+depot.counts <- pb.subset[,grep("PRSS23", colnames(pb.subset))]
+depot.md <- md[match(colnames(depot.counts), md[,1]),]
+mm <- model.matrix(~ factor(depot.md$V2) + factor(depot.md$V4))
+DGE <- DGEList(counts = depot.counts, group = depot.md$V4)
+DGE <- calcNormFactors(DGE)
+DGE <- estimateDisp(DGE, design = mm)
+fit <- glmFit(DGE,mm)
+test <- glmLRT(fit, coef = "factor(depot.md$V4)VAT")
+test <- as.data.frame(topTags(test, n = nrow(depot.counts), sort.by = "none"))
+test <- test[ test$FDR <= 0.05 & abs(test$logFC) >= log2(1.5),]
+norm_prss <- as.data.frame(cpm(DGE, normalized.lib.sizes = TRUE, log = TRUE, prior.count = 1))
+norm_prss <- removeBatchEffect(norm_prss, batch = depot.md$V2, design = model.matrix(~ factor(depot.md$V4)))
+norm_prss <- t(scale(t(norm_prss)))
+genes_prss <- rownames(test)
+
+# DCN+ adipocytes
+depot.counts <- pb.subset[,grep("DCN", colnames(pb.subset))]
+depot.md <- md[match(colnames(depot.counts), md[,1]),]
+mm <- model.matrix(~ factor(depot.md$V2) + factor(depot.md$V4))
+DGE <- DGEList(counts = depot.counts, group = depot.md$V4)
+DGE <- calcNormFactors(DGE)
+DGE <- estimateDisp(DGE, design = mm)
+fit <- glmFit(DGE,mm)
+test <- glmLRT(fit, coef = "factor(depot.md$V4)VAT")
+test <- as.data.frame(topTags(test, n = nrow(depot.counts), sort.by = "none"))
+test <- test[ test$FDR <= 0.05 & abs(test$logFC) >= log2(1.5),]
+norm_dcn <- as.data.frame(cpm(DGE, normalized.lib.sizes = TRUE, log = TRUE, prior.count = 1))
+norm_dcn <- removeBatchEffect(norm_dcn, batch = depot.md$V2, design = model.matrix(~ factor(depot.md$V4)))
+norm_dcn <- t(scale(t(norm_dcn)))
+genes_dcn <- rownames(test)
+
+## Combine genes and plot heatmaps
+depot_genes <- unique(c(genes_dcn, genes_clstn, genes_dgat, genes_prss))
+
+## Combine results and cluster
+norm_counts <- cbind(norm_dcn[ rownames(norm_dcn) %in% depot_genes,],norm_dgat[ rownames(norm_dgat) %in% depot_genes,],norm_clstn[ rownames(norm_clstn) %in% depot_genes,],norm_prss[ rownames(norm_prss) %in% depot_genes,])
+md_match <- md[ match(colnames(norm_counts), md[,1]),]
+norm_counts <- norm_counts[ , order(md_match$V5, md_match$V4, md_match$V2)]
+md_match <- md_match[order(md_match$V5, md_match$V4, md_match$V2),]
+annot <- HeatmapAnnotation(Celltype = md_match$V5, Depot = md_match$V4, Study = md_match$V2)
+Heatmap(norm_counts, cluster_columns = FALSE, km = 2, bottom_annotation = annot)
 
 #### Deconvolution using Bisque
 ### SAT
