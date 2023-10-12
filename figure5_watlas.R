@@ -1167,6 +1167,56 @@ WATLAS@meta.data[ WATLAS@meta.data$bmi == "NA", "wtstatus"] <- "NA"
 ## Save the final object
 saveRDS(WATLAS, "data/Adipose/WATLAS_final_metadata.Rds")
 
+#### Label comparisons
+# Tabula Sapiens
+local <- readRDS("/work/NMF_project/reproducibility/data/Adipose/raw/TS/local.rds")
+local <- subset(local, tissue == "adipose tissue")
+local <- subset(local, cells = colnames(local)[colnames(local) %in% colnames(WATLAS)])
+md <- WATLAS@meta.data
+md <- md[ rownames(md) %in% colnames(local),]
+md <- md[ match(colnames(local), rownames(md)),]
+local.harmonized <- md
+local.harmonized$author <- paste("TS_", as.character(local$cell_type), sep="") 
+
+# Jaitin
+jaitin <- read.delim("data/Adipose/raw/Jaitin/10xHumanImmuneMatrix.csv", sep=",")
+jaitin <- jaitin[ jaitin$CellID %in% colnames(WATLAS),]
+md <- WATLAS@meta.data
+md <- md[ rownames(md) %in% jaitin$CellID,]
+md <- md[ match(jaitin$CellID, rownames(md)),]
+jaitin.harmonized <- md
+jaitin.harmonized$author <- paste("Jaitin_", jaitin$cell.type, sep="")
+
+# Emont
+emont <- readRDS("data/Adipose/raw/Emont/emont.rds")
+emont <- subset(emont, cells = colnames(emont)[colnames(emont) %in% colnames(WATLAS)])
+md <- WATLAS@meta.data
+md <- md[ rownames(md) %in% colnames(emont),]
+md <- md[ match(colnames(emont), rownames(md)),]
+emont$cell_type2 <- as.character(emont$cell_type2)
+emont.harmonized <- md
+emont.harmonized$author <- paste("Emont_", emont$cell_type2, sep="")
+
+# Barboza
+barboza <- read.delim("data/Adipose/raw/Barboza/metadata.tsv")
+barboza <- barboza[-1,]
+barboza$NAME <- substr(barboza$NAME,regexpr("-", barboza$NAME)+1, nchar(barboza$NAME))
+barboza <- barboza[ barboza$NAME %in% colnames(WATLAS),]
+md <- WATLAS@meta.data
+md <- md[ rownames(md) %in% barboza$NAME,]
+md <- md[ match(barboza$NAME, rownames(md)),]
+barboza.harmonized <- md
+barboza.harmonized$author <- paste("Barboza_", barboza$seurat_clusters, sep="")
+
+## Combine labels and plot
+combined.labels <- rbind(barboza.harmonized, emont.harmonized, jaitin.harmonized, local.harmonized)
+mat <- as.data.frame.matrix(table(combined.labels$author, combined.labels$labels.l1))
+mat <- mat / rowSums(mat)
+row_anno <- data.frame(label = rownames(mat))
+row_anno$study <- substr(row_anno$label, 0, regexpr("_", row_anno$label)-1)
+row_anno$author <- substr(row_anno$label, regexpr("_", row_anno$label)+1, nchar(row_anno$label))
+Heatmap(mat, cluster_columns = FALSE, row_labels = row_anno$author, split = row_anno$study, col = colorRamp2(c(0, 1), c("white", "blue")))
+
 #### Analysis of marker genes
 ### DotPlot to visualize
 ## Coarse labels
