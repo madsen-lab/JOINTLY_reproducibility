@@ -25,7 +25,7 @@ use_virtualenv("/work/PythonEnv/scVI_new/")
 source("functions.R")
 
 ## Define dimensions to use for each method
-dim.list <- list(scVI = 10, Harmony = 20, JOINTLY = 15, RPCA = 30, FastMNN = 20, LIGER = 20, Scanorama = 50, Unintegrated = 20, scGPT = 512)
+dim.list <- list(scVI = 10, Harmony = 20, JOINTLY = 20, RPCA = 30, FastMNN = 20, LIGER = 20, Scanorama = 50, Unintegrated = 20, scGPT = 512)
 
 ## Define file list
 files <- c(
@@ -419,15 +419,15 @@ md.subset <- dataset@meta.data
 
 # LISI
 for (i in 1:5) {
-  LISIS <- compute_lisi(dataset[[paste("JOINTLY_rep",i, sep="")]]@cell.embeddings[,1:15], dataset@meta.data, label_colnames = c("batch_label", "transfer_label"))
+  LISIS <- compute_lisi(dataset[[paste("JOINTLY_rep",i, sep="")]]@cell.embeddings[,1:20], dataset@meta.data, label_colnames = c("batch_label", "transfer_label"))
   global_cLISI <- c(global_cLISI, median((length(unique(dataset@meta.data[,"transfer_label"]))-LISIS[,2]) / (length(unique(dataset@meta.data[,"transfer_label"])) - 1)))
   global_iLISI <- c(global_iLISI, median((LISIS[,1]-1) / (length(unique(dataset@meta.data[,"batch_label"])) - 1)))
 
   # Distance mat
-  space <- dataset[[paste("JOINTLY_rep",i, sep="")]]@cell.embeddings[,1:15]
+  space <- dataset[[paste("JOINTLY_rep",i, sep="")]]@cell.embeddings[,1:20]
   space <- space[ rownames(space) %in% rownames(md.subset),]
   space <- space[ match(rownames(md.subset), rownames(space)),]
-  dist.mat <- Rfast::Dist(space[,1:15])
+  dist.mat <- Rfast::Dist(space[,1:20])
   
   # Batch ASW
   sil <- cluster::silhouette(as.numeric(factor(md.subset[,"batch_label"], labels = seq(length(unique(md.subset[,"batch_label"]))))), dmatrix = dist.mat, do.col.sort = FALSE)
@@ -445,7 +445,7 @@ for (i in 1:5) {
   global_cASW <- c(global_cASW, mean((sil + 1) / 2))
   
   # ARI
-  dend <- HGC.dendrogram(G = HGC::SNN.Construction(dataset[[paste("JOINTLY_rep",i, sep="")]]@cell.embeddings[,1:15]))
+  dend <- HGC.dendrogram(G = HGC::SNN.Construction(dataset[[paste("JOINTLY_rep",i, sep="")]]@cell.embeddings[,1:20]))
   aris <- c()
   for (cl in seq(1, 50, 1)) {
     # Cluster
@@ -489,15 +489,15 @@ for (obj in tracking[ tracking[,1] == file,2]) {
   md.subset <- dataset.subset@meta.data
   for (i in 1:5) {
     # LISI
-    LISIS <- compute_lisi(dataset.subset[[paste("JOINTLY_rep",i, sep="")]]@cell.embeddings[,1:15], dataset.subset@meta.data, label_colnames = c("batch_label", "transfer_label"))
+    LISIS <- compute_lisi(dataset.subset[[paste("JOINTLY_rep",i, sep="")]]@cell.embeddings[,1:20], dataset.subset@meta.data, label_colnames = c("batch_label", "transfer_label"))
     global_cLISI <- c(global_cLISI, median((length(unique(dataset.subset@meta.data[,"transfer_label"]))-LISIS[,2]) / (length(unique(dataset.subset@meta.data[,"transfer_label"])) - 1)))
     global_iLISI <- c(global_iLISI, median((LISIS[,1]-1) / (length(unique(dataset.subset@meta.data[,"batch_label"])) - 1)))
     
     # Distance mat
-    space <- dataset.subset[[paste("JOINTLY_rep",i, sep="")]]@cell.embeddings[,1:15]
+    space <- dataset.subset[[paste("JOINTLY_rep",i, sep="")]]@cell.embeddings[,1:20]
     space <- space[ rownames(space) %in% rownames(md.subset),]
     space <- space[ match(rownames(md.subset), rownames(space)),]
-    dist.mat <- Rfast::Dist(space[,1:15])
+    dist.mat <- Rfast::Dist(space[,1:20])
     
     # Batch ASW
     sil <- cluster::silhouette(as.numeric(factor(md.subset[,"batch_label"], labels = seq(length(unique(md.subset[,"batch_label"]))))), dmatrix = dist.mat, do.col.sort = FALSE)
@@ -515,7 +515,7 @@ for (obj in tracking[ tracking[,1] == file,2]) {
     global_cASW <- c(global_cASW, mean((sil + 1) / 2))
     
     # ARI
-    dend <- HGC.dendrogram(G = HGC::SNN.Construction(dataset.subset[[paste("JOINTLY_rep",i, sep="")]]@cell.embeddings[,1:15]))
+    dend <- HGC.dendrogram(G = HGC::SNN.Construction(dataset.subset[[paste("JOINTLY_rep",i, sep="")]]@cell.embeddings[,1:20]))
     aris <- c()
     for (cl in seq(1, 50, 1)) {
       # Cluster
@@ -551,16 +551,16 @@ reference.set <- 2
 # Full dataset
 overlap.score <- c()
 for (q in (1:5)[-reference.set]) {
-  full <- dataset[[paste("JOINTLY_rep", reference.set, sep="")]]@cell.embeddings[,1:15]
-  subs <- dataset[[paste("JOINTLY_rep", q, sep="")]]@cell.embeddings[,1:15]
+  full <- dataset[[paste("JOINTLY_rep", reference.set, sep="")]]@cell.embeddings[,1:20]
+  subs <- dataset[[paste("JOINTLY_rep", q, sep="")]]@cell.embeddings[,1:20]
   subs <- subs[ match(rownames(full), rownames(subs)),]
-  full.nn <- RANN::nn2(full, k= 31)$nn.idx
-  subs.nn <- RANN::nn2(subs, k= 31)$nn.idx
+  full.nn <- RANN::nn2(full, k= 101)$nn.idx
+  subs.nn <- RANN::nn2(subs, k= 101)$nn.idx
   hits <- 0
   for (row in 1:nrow(full.nn)) {
-    hits <- hits + sum(full.nn[1,2:31] %in% subs.nn[1,2:31])
+    hits <- hits + sum(full.nn[1,2:101] %in% subs.nn[1,2:101])
   }
-  overlap.score <- c(overlap.score, hits / (nrow(subs.nn) * 30))
+  overlap.score <- c(overlap.score, hits / (nrow(subs.nn) * 100))
 }
 results[1,8] <- max(overlap.score)
 
@@ -569,16 +569,16 @@ full.overlap <- c()
 for (ref.set in 1:6) {
   overlap.score <- c()
   for (q in (1:6)[-ref.set]) {
-    full <- dataset[[paste("JOINTLY_rep", ref.set, sep="")]]@cell.embeddings[,1:15]
-    subs <- dataset[[paste("JOINTLY_rep", q, sep="")]]@cell.embeddings[,1:15]
+    full <- dataset[[paste("JOINTLY_rep", ref.set, sep="")]]@cell.embeddings[,1:20]
+    subs <- dataset[[paste("JOINTLY_rep", q, sep="")]]@cell.embeddings[,1:20]
     subs <- subs[ match(rownames(full), rownames(subs)),]
-    full.nn <- RANN::nn2(full, k= 31)$nn.idx
-    subs.nn <- RANN::nn2(subs, k= 31)$nn.idx
+    full.nn <- RANN::nn2(full, k= 101)$nn.idx
+    subs.nn <- RANN::nn2(subs, k= 101)$nn.idx
     hits <- 0
     for (row in 1:nrow(full.nn)) {
-      hits <- hits + sum(full.nn[1,2:31] %in% subs.nn[1,2:31])
+      hits <- hits + sum(full.nn[1,2:101] %in% subs.nn[1,2:101])
     }
-    overlap.score <- c(overlap.score, hits / (nrow(subs.nn) * 30))
+    overlap.score <- c(overlap.score, hits / (nrow(subs.nn) * 100))
   }
   full.overlap <- c(full.overlap, max(overlap.score))
 }
@@ -603,16 +603,16 @@ for (obj in tracking[ tracking[,1] == file,2]) {
   # Find neighbors in the full dataset
   overlap.score <- c()
   for (q in 1:5) {
-    full <- dataset.subsetted[[paste("JOINTLY_rep", reference.set, sep="")]]@cell.embeddings[,1:15]
-    subs <- dataset.subset[[paste("JOINTLY_rep", q, sep="")]]@cell.embeddings[,1:15]
+    full <- dataset.subsetted[[paste("JOINTLY_rep", reference.set, sep="")]]@cell.embeddings[,1:20]
+    subs <- dataset.subset[[paste("JOINTLY_rep", q, sep="")]]@cell.embeddings[,1:20]
     subs <- subs[ match(rownames(full), rownames(subs)),]
-    full.nn <- RANN::nn2(full, k= 31)$nn.idx
-    subs.nn <- RANN::nn2(subs, k= 31)$nn.idx
+    full.nn <- RANN::nn2(full, k= 101)$nn.idx
+    subs.nn <- RANN::nn2(subs, k= 101)$nn.idx
     hits <- 0
     for (row in 1:nrow(full.nn)) {
-      hits <- hits + sum(full.nn[1,2:31] %in% subs.nn[1,2:31])
+      hits <- hits + sum(full.nn[1,2:101] %in% subs.nn[1,2:101])
     }
-    overlap.score <- c(overlap.score, hits / (nrow(subs.nn) * 30))
+    overlap.score <- c(overlap.score, hits / (nrow(subs.nn) * 100))
   }
   results[ results[,2] == tracking[ tracking[,2] == obj,4],8] <- max(overlap.score)
   print(obj)
