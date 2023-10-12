@@ -13,15 +13,301 @@ library(enrichR)
 library(ggplot2)
 library(patchwork)
 library(data.table)
-library(HGC)
 library(edgeR)
-library(ComplexHeatmap)
+library(lisi)
+library(HGC)
+library(aricode)
 library(reticulate)
 use_virtualenv("PythonEnv/scVI_new/")
 
 ## Functions
 source("functions.R")
 
+### Extended benchmark of dataset mixtures (review round 2)
+## Import datasets
+ds.list <- list()
+liver <- readRDS("data/Liver/Human_Liver.rds")
+liver$tissue <- "Liver"
+ds.list[[1]] <- liver
+pancreas <- readRDS("data/Pancreas/Human_Pancreas.rds")
+pancreas$tissue <- "Pancreas"
+ds.list[[2]] <- pancreas
+kidney <- readRDS("data/Kidney/Human_Kidney_sub.rds")
+kidney$tissue <- "Kidney"
+ds.list[[3]] <- kidney
+lung <- readRDS("data/Lung/Human_Lung_sub.rds")
+lung$tissue <- "Lung"
+ds.list[[4]] <- lung
+pbmc <- readRDS("data/PBMC/PBMC.rds")
+pbmc$tissue <- "PBMC"
+ds.list[[5]] <- pbmc
+
+## Load genes
+load("data/genes.rda")
+
+## Define combinations
+comb <- data.frame(dsA = c(1,1,1,1,2,2,2,3,3,4), dsB = c(2,3,4,5,3,4,5,4,5,5))
+comb.list <- list()
+for (comb.idx in 1:nrow(comb)) {
+  dsA <- ds.list[[comb[comb.idx,"dsA"]]]
+  dsB <- ds.list[[comb[comb.idx,"dsB"]]]
+  dsA.genes <- which.max(c(sum(rownames(dsA) %in% human[,1]),sum(rownames(dsA) %in% human[,2]),sum(rownames(dsA) %in% human[,3]),sum(rownames(dsA) %in% human[,5])))
+  dsB.genes <- which.max(c(sum(rownames(dsB) %in% human[,1]),sum(rownames(dsB) %in% human[,2]),sum(rownames(dsB) %in% human[,3]),sum(rownames(dsB) %in% human[,5])))
+  if (dsA.genes != dsB.genes) {
+    if (dsA.genes == 4) { dsA.genes <- 5 }
+    if (dsB.genes == 4) { dsB.genes <- 5 }
+    dsB.counts <- GetAssayData(dsB, "count")
+    dsB.features <- data.frame(original = rownames(dsB))
+    dsB.features <- merge(dsB.features, human[,c(dsB.genes, dsA.genes)], by.x = "original", by.y = colnames(human)[dsB.genes], all.x = TRUE, sort = FALSE)
+    dsB.features$match <- 0
+    dsB.features[ dsB.features[,2] %in% rownames(dsA), "match"] <- 1
+    dsB.features <- dsB.features[ order(dsB.features[,1], dsB.features[,3], decreasing = TRUE),]
+    dsB.features <- dsB.features[ duplicated(dsB.features[,1])==FALSE,]
+    dsB.features <- dsB.features[ match(rownames(dsB), dsB.features$original),]
+    idx.keep <- !is.na(dsB.features[,2])
+    dsB.counts <- dsB.counts[ idx.keep,]
+    dsB.features <- dsB.features[ idx.keep,]
+    idx.keep <- which(duplicated(dsB.features[,2])==FALSE)
+    dsB.counts <- dsB.counts[ idx.keep,]
+    dsB.features <- dsB.features[ idx.keep,]
+    idx.keep <- dsB.features[,2] != ""
+    dsB.counts <- dsB.counts[ idx.keep,]
+    dsB.features <- dsB.features[ idx.keep,]
+    rownames(dsB.counts) <- dsB.features[,2]
+    dsB[["RNA"]] <- CreateAssayObject(counts = dsB.counts)
+  }
+  dsA.counts <- GetAssayData(dsA, "count")
+  dsB.counts <- GetAssayData(dsB, "count")
+  common <- intersect(rownames(dsA.counts), rownames(dsB.counts))
+  dsA.counts <- dsA.counts[ rownames(dsA.counts) %in% common,]
+  dsB.counts <- dsB.counts[ rownames(dsB.counts) %in% common,]
+  dsB.counts <- dsB.counts[ match(rownames(dsA.counts), rownames(dsB.counts)),]
+  dsA[["RNA"]] <- CreateAssayObject(counts = dsA.counts)
+  dsB[["RNA"]] <- CreateAssayObject(counts = dsB.counts)
+  ds <- merge(dsA, dsB)
+  saveRDS(ds, paste("data/Mixture/DS_", comb.idx, ".rds", sep=""))
+}
+
+## Define dimensions to use for each method
+dim.list <- list(scVI = 10, Harmony = 20, JOINTLY = 20, RPCA = 30, FastMNN = 20, LIGER = 20, Scanorama = 20, Unintegrated = 20)
+
+## Define file list
+files <- c(
+  "data/Mixture/DS_1.rds",
+  "data/Mixture/DS_2.rds",
+  "data/Mixture/DS_3.rds",
+  "data/Mixture/DS_4.rds",
+  "data/Mixture/DS_5.rds",
+  "data/Mixture/DS_6.rds",
+  "data/Mixture/DS_7.rds",
+  "data/Mixture/DS_8.rds",
+  "data/Mixture/DS_9.rds",
+  "data/Mixture/DS_10.rds")
+
+## Loop across files, embed and evaluate
+for (file in files) {
+  # Load the dataset
+  dataset <- readRDS(file)
+  
+  # Set variables and clean up the dataset
+  dataset$batch_label <- as.character(dataset$batch_label)
+  assays.remove <- names(dataset@assays)[names(dataset@assays) != "RNA"]
+  if (length(assays.remove) > 0) { for (assay in assays.remove) { dataset[[assay]] <- NULL } }
+  
+  # Define output files and run defaults
+  outfile <- gsub(".rds", "_embeddings.rds", file)
+  embed <- embedMethods(data = dataset, batch_var = "batch_label", outpath = outfile, JOINTLY_PCA = TRUE)
+  
+  # Add scGPT (for review)
+  name <- gsub("data/Mixture/DS_", "", file)
+  prepareGPT(dataset = dataset, batch_var = "batch_label", load = FALSE, outpath = paste("data/Mixture/mix_ds", gsub(".rds", "", name), ".rds", sep=""))
+  
+  ## Run scGPT (see scGPT.ipynb)
+  
+  ## Add scGPT to embedding list
+  for (rep in 0:4) {
+    # Import embeddings
+    embedding <- read.delim(paste("data/Mixture/mix_ds", gsub(".rds", "", name), "_scGPT_", rep, ".txt", sep=""), header=TRUE, sep = ",")
+    rownames(embedding) <- embedding[,1]
+    embedding <- embedding[,-1]
+    colnames(embedding) <- paste("scGPT_", 1:ncol(embedding), sep="")
+    embedding <- embedding[ match(colnames(dataset), rownames(embedding)),]
+    
+    # Insert into embed object
+    embed$embeddings[[length(embed$embeddings)+1]] <- embedding
+    names(embed$embeddings)[length(embed$embeddings)] <- paste("scGPT_rep", rep+1, sep="")
+    print(rep)
+  }
+  
+  ## Save the embedding list
+  saveRDS(embed, outfile)
+}
+
+### Evaluate embeddings
+## Import labels
+files <- c(
+  "data/Liver/Human_Liver.rds",
+  "data/Pancreas/Human_Pancreas.rds",
+  "data/Kidney/Human_Kidney_sub.rds",
+  "data/Lung/Human_Lung_sub.rds",
+  "data/PBMC/PBMC.rds")
+
+for (file in files) {
+  tmp.labels <- read.delim(paste(substr(file, 0, nchar(file)- regexpr("/", intToUtf8(rev(utf8ToInt(file))))+1), "Transferred_labels.tsv", sep=""), header=TRUE)
+  tiss <- gsub("data/", "", file)
+  tmp.labels$tissue <- substr(tiss, 0, regexpr("/", tiss)-1)
+  if (file == files[1]) {
+    labels <- tmp.labels
+  } else {
+    labels <- rbind(labels, tmp.labels)
+  }
+}
+
+## Define file list
+files <- c(
+  "data/Mixture/DS_1.rds",
+  "data/Mixture/DS_2.rds",
+  "data/Mixture/DS_3.rds",
+  "data/Mixture/DS_4.rds",
+  "data/Mixture/DS_5.rds",
+  "data/Mixture/DS_6.rds",
+  "data/Mixture/DS_7.rds",
+  "data/Mixture/DS_8.rds",
+  "data/Mixture/DS_9.rds",
+  "data/Mixture/DS_10.rds")
+
+# Import the data
+rank.list <- list()
+lisi.list <- list()
+for (file in files) {
+  dataset <- readRDS(file)
+  dataset$batch_label <- as.character(dataset$batch_label)
+  assays.remove <- names(dataset@assays)[names(dataset@assays) != "RNA"]
+  if (length(assays.remove) > 0) { for (assay in assays.remove) { dataset[[assay]] <- NULL } }
+  
+  # Import embeddings
+  infile <- gsub(".rds", "_embeddings.rds", file)
+  embed <- readRDS(infile)
+  
+  # Get labels
+  labels.matched <- labels[ labels$X %in% colnames(dataset),]
+  labels.matched <- labels.matched[ match(colnames(dataset), labels.matched$X),]
+  dataset$transfer_label <- labels.matched[,2]
+  dataset$tissue <- labels.matched[,3]
+  dataset$new_label <- paste(dataset$tissue, dataset$transfer_label)
+  dataset <- subset(dataset, transfer_label != "")
+  dataset <- subset(dataset, new_label %in% names(which(table(dataset$new_label) >= 10)))
+  
+  ## Calculate best ARI for each embedding
+  metadata <- dataset@meta.data
+  summary <- as.data.frame(matrix(ncol=2, nrow=length(embed$embeddings)))
+  for (embed.idx in 1:length(embed$embeddings)) {
+    embed.mat <- as.matrix(embed$embeddings[[embed.idx]])
+    embed.mat <- embed.mat[ rownames(embed.mat) %in% colnames(dataset),]
+    embed.mat <- embed.mat[ match(colnames(dataset), rownames(embed.mat)),]
+    method <- substr(names(embed$embeddings)[embed.idx],0,regexpr("_",names(embed$embeddings)[embed.idx])-1)
+    dims <- dim.list[[which(names(dim.list) == method)]]
+    
+    # Setup to capture clustering metrics
+    label_var <- "new_label"
+    global_aris <- c()
+    cl.min = 1; cl.max = 50
+    cluster_list <- list()
+    
+    # Evaluate clustering metrics
+    dend <- HGC.dendrogram(G = HGC::SNN.Construction(embed.mat[,1:dims]))
+    for (cl in seq(cl.min, cl.max, 1)) {
+      # Cluster
+      if (cl == 1) {
+        clusters <- rep(1, nrow(metadata))
+        names(clusters) <- rownames(metadata)
+      } else {
+        clusters <- cutree(dend, k = cl)
+        names(clusters) <- rownames(metadata)
+      }
+      cluster_list[[length(cluster_list)+1]] <- clusters
+      
+      # Capture global metrics for labels
+      global_aris <- c(global_aris, aricode::ARI(clusters, factor(metadata[,label_var])))
+    }
+    
+    # Save
+    summary[embed.idx,1] <- embed.idx
+    summary[embed.idx,2] <- max(global_aris)
+    print(embed.idx)
+  }
+  
+  ## For each method, select the run with the best global ARI and create a UMAP
+  summary[,3] <- names(embed$embeddings)
+  summary[,4] <- substr(summary[,3], 0, regexpr("_", summary[,3])-1)
+  for (method in unique(summary[,4])) {
+    embed.mat <- embed$embeddings[[summary[ summary[,4] %in% method,][which.max(summary[ summary[,4] %in% method,2]),1]]]
+    embed.mat <- embed.mat[ rownames(embed.mat) %in% colnames(dataset),]
+    embed.mat <- embed.mat[ match(colnames(dataset), rownames(embed.mat)),]
+    dims <- dim.list[[which(names(dim.list) == method)]]
+    dataset[[paste(method, "_raw",sep="")]] <- suppressWarnings(CreateDimReducObject(as.matrix(embed.mat)))
+    dataset <- RunUMAP(dataset, dims = 1:dims, verbose = FALSE, reduction = paste(method, "_raw",sep=""), reduction.name = paste(method, "_umap",sep=""))
+  }
+  saveRDS(dataset, gsub(".rds", "_processed.rds", file))
+  
+  ## Calculate raw lisi
+  lisi.res <- as.data.frame(matrix(ncol=6,nrow=1))
+  lisi.counter <- 1
+  md <- dataset@meta.data
+  methods <- unique(substr(names(dataset@reductions),0, regexpr("_", names(dataset@reductions))-1))
+  for (method in methods[ methods != "Unintegrated"]) {
+    lisi.res[lisi.counter,1] <- method
+    overall.lisi <- compute_lisi(dataset[[paste(method, "_raw", sep="")]]@cell.embeddings[,1:dim.list[[which(names(dim.list) == method)]]], meta_data = md, label_colnames = c("tissue", "batch_label"))
+    lisi.res[lisi.counter,2] <- mean((overall.lisi[,1]-1) / (2-1))
+    lung.lisi <- compute_lisi(dataset[[paste(method, "_raw", sep="")]]@cell.embeddings[which(dataset$tissue == unique(dataset$tissue)[1]),1:dim.list[[which(names(dim.list) == method)]]], meta_data = md[which(dataset$tissue == unique(dataset$tissue)[1]),], label_colnames = c("new_label","batch_label"))
+    lisi.res[lisi.counter,3] <- mean((lung.lisi[,1]-1) / (length(unique(md[which(dataset$tissue == unique(dataset$tissue)[1]),"batch_label"]))-1))
+    lisi.res[lisi.counter,4] <- mean((length(unique(md[which(dataset$tissue == unique(dataset$tissue)[1]),"new_label"]))-lung.lisi[,2]) / (length(unique(md[which(dataset$tissue == unique(dataset$tissue)[1]),"new_label"]))-1))
+    pancreas.lisi <- compute_lisi(dataset[[paste(method, "_raw", sep="")]]@cell.embeddings[which(dataset$tissue == unique(dataset$tissue)[2]),1:dim.list[[which(names(dim.list) == method)]]], meta_data = md[which(dataset$tissue == unique(dataset$tissue)[2]),], label_colnames = c("new_label","batch_label"))
+    lisi.res[lisi.counter,5] <- mean((pancreas.lisi[,1]-1) / (length(unique(md[which(dataset$tissue == unique(dataset$tissue)[2]),"batch_label"]))-1))
+    lisi.res[lisi.counter,6] <- mean((length(unique(md[which(dataset$tissue == unique(dataset$tissue)[2]),"new_label"]))-pancreas.lisi[,2]) / (length(unique(md[which(dataset$tissue == unique(dataset$tissue)[2]),"new_label"]))-1))
+    lisi.counter <- lisi.counter + 1
+  }
+  lisi.list[[length(lisi.list)+1]] <- lisi.res
+
+  ## Extract ranks for iLISI across and within tissues, and cLISI within tissues
+  ranks <- rbind(
+    rank(-signif(lisi.res[,3],3), ties.method = 'min'),
+    rank(-signif(lisi.res[,5],3), ties.method = 'min'),
+    rank(-signif(lisi.res[,4],3), ties.method = 'min'),
+    rank(-signif(lisi.res[,6],3),ties.method = 'min'),
+    rank(signif(lisi.res[,2],3),ties.method = 'min'))
+  
+  ## Calculate an overall rank
+  ranks <- rbind(ranks, rank(colMeans(rbind(rank(colMeans(ranks[c(1,2),]),ties.method = 'min'),rank(colMeans(ranks[c(3,4),]),ties.method = 'min'), ranks[5,])), ties.method = 'min'))
+  colnames(ranks) <- methods[ methods != "Unintegrated"]
+  rank.list[[length(rank.list)+1]] <- ranks
+}
+
+# Plot the ranks
+ht.list <- list()
+for (m in 1:length(rank.list)) {
+  rownames(rank.list[[m]]) <- c("Tis1_iLISI", "Tis1_cLISI","Tis2_iLISI", "Tis2_cLISI","Over-correction", "Overall")
+  ht.list[[length(ht.list)+1]] <- Heatmap(rank.list[[m]], cluster_rows = FALSE, cluster_columns = FALSE, show_heatmap_legend = FALSE, col = colorRamp2(c(1, 8), c("#EFF3FF", "#2171B5")), rect_gp = gpar(col = "black", lwd = 1), row_names_side = "left")
+}
+Reduce("+", ht.list)
+
+## Supplementary table
+for (m in 1:length(lisi.list)) {
+  dataset <- readRDS(paste("data/Mixture/DS_", m, "_processed.rds", sep=""))
+  tmp <- lisi.list[[m]]
+  colnames(tmp) <- c("Method", "Overcorrection", "iLISI_Tissue1", "cLISI_Tissue1", "iLISI_Tissue2","cLISI_Tissue2")
+  tmp$Tissue1 <- unique(dataset$tissue)[1]
+  tmp$Tissue2 <- unique(dataset$tissue)[2]
+  tmp <- tmp[,c(7,8,1:6)]
+  if (m == 1) {
+    results <- tmp
+  } else {
+    results <- rbind(results, tmp)
+  }
+}
+writexl::write_xlsx(results, path = "unintegratable_supplementary_table_new.xlsx")
+
+#### Analyze mixture of human lung and human pancreas (done prior to review round 2)
 ## Import datasets
 pancreas <- readRDS("data/Pancreas/Human_Pancreas.rds")
 pancreas$tissue <- "Pancreas"
@@ -45,7 +331,7 @@ dataset$batch_label <- as.character(dataset$batch_label)
 assays.remove <- names(dataset@assays)[names(dataset@assays) != "RNA"]
 if (length(assays.remove) > 0) { for (assay in assays.remove) { dataset[[assay]] <- NULL } }
 
-## Output for scGPT (for review)
+## Output for scGPT (for review round 1)
 prepareGPT(dataset = dataset, batch_var = "batch_label", load = FALSE, outpath = "data/Mixture/mix.rds")
 
 ## Run scGPT (see scGPT.ipynb)
@@ -65,7 +351,7 @@ for (rep in 0:4) {
   embedding <- embedding[,-1]
   colnames(embedding) <- paste("scGPT_", 1:ncol(embedding), sep="")
   embedding <- embedding[ match(colnames(dataset), rownames(embedding)),]
-    
+  
   # Insert into embed object
   embed$embeddings[[length(embed$embeddings)+1]] <- embedding
   names(embed$embeddings)[length(embed$embeddings)] <- paste("scGPT_rep", rep+1, sep="")
@@ -93,7 +379,7 @@ for (embed.idx in 1:length(embed$embeddings)) {
   embed.mat <- embed.mat[ match(colnames(dataset), rownames(embed.mat)),]
   method <- substr(names(embed$embeddings)[embed.idx],0,regexpr("_",names(embed$embeddings)[embed.idx])-1)
   dims <- dim.list[[which(names(dim.list) == method)]]
-
+  
   # Setup to capture clustering metrics
   label_var <- "transfer_label"
   global_aris <- c()
@@ -116,7 +402,7 @@ for (embed.idx in 1:length(embed$embeddings)) {
     # Capture global metrics for labels
     global_aris <- c(global_aris, aricode::ARI(clusters, factor(metadata[,label_var])))
   }
-
+  
   # Save
   summary[embed.idx,1] <- embed.idx
   summary[embed.idx,2] <- max(global_aris)
@@ -406,52 +692,3 @@ cnts.plot <- t(scale(t(cnts[rownames(cnts) %in% IFNy.subset,grep("ndothelial", c
 annot <- HeatmapAnnotation(tissue = c(rep("Lung",6), rep("Pancreas",12)))
 htm <- Heatmap(cnts.plot, bottom_annotation = annot, show_row_dend = FALSE, show_row_names = TRUE, show_column_names = FALSE, km = 2)
 htm <- draw(htm)
-
-### Over-correction evaluation with LISI
-## Calculate iLISI and cLISI within and across tissues
-lisi.res <- as.data.frame(matrix(ncol=6,nrow=1))
-lisi.counter <- 1
-dataset$new_label <- paste(dataset$tissue, dataset$transfer_label)
-md <- dataset@meta.data
-for (method in names(dim.list)[names(dim.list) != "Unintegrated"]) {
-  lisi.res[lisi.counter,1] <- method
-  overall.lisi <- compute_lisi(dataset[[paste(method, "_raw", sep="")]]@cell.embeddings[,1:dim.list[[which(names(dim.list) == method)]]], meta_data = md, label_colnames = c("tissue", "batch_label"))
-  lisi.res[lisi.counter,2] <- mean((overall.lisi[,1]-1) / (2-1))
-  lung.lisi <- compute_lisi(dataset[[paste(method, "_raw", sep="")]]@cell.embeddings[which(dataset$tissue == "Lung"),1:dim.list[[which(names(dim.list) == method)]]], meta_data = md[which(dataset$tissue == "Lung"),], label_colnames = c("new_label","batch_label"))
-  lisi.res[lisi.counter,3] <- mean((lung.lisi[,1]-1) / (length(unique(md[which(dataset$tissue == "Lung"),"batch_label"]))-1))
-  lisi.res[lisi.counter,4] <- mean((length(unique(md[which(dataset$tissue == "Lung"),"new_label"]))-lung.lisi[,2]) / (length(unique(md[which(dataset$tissue == "Lung"),"new_label"]))-1))
-  pancreas.lisi <- compute_lisi(dataset[[paste(method, "_raw", sep="")]]@cell.embeddings[which(dataset$tissue == "Pancreas"),1:dim.list[[which(names(dim.list) == method)]]], meta_data = md[which(dataset$tissue == "Pancreas"),], label_colnames = c("new_label","batch_label"))
-  lisi.res[lisi.counter,5] <- mean((pancreas.lisi[,1]-1) / (length(unique(md[which(dataset$tissue == "Pancreas"),"batch_label"]))-1))
-  lisi.res[lisi.counter,6] <- mean((length(unique(md[which(dataset$tissue == "Pancreas"),"new_label"]))-pancreas.lisi[,2]) / (length(unique(md[which(dataset$tissue == "Pancreas"),"new_label"]))-1))
-  lisi.counter <- lisi.counter + 1
-}
-
-## Extract ranks for iLISI across and within tissues, and cLISI within tissues
-ranks <- rbind(
-  rank(-signif(lisi.res[,3],3), ties.method = 'min'),
-  rank(-signif(lisi.res[,5],3), ties.method = 'min'),
-  rank(-signif(lisi.res[,4],3), ties.method = 'min'),
-  rank(-signif(lisi.res[,6],3),ties.method = 'min'),
-  rank(signif(lisi.res[,2],3),ties.method = 'min'))
-
-## Calculate an overall rank
-ranks <- rbind(ranks, rank(colMeans(rbind(rank(colMeans(ranks[c(1,2),]),ties.method = 'min'),rank(colMeans(ranks[c(3,4),]),ties.method = 'min'), ranks[5,])), ties.method = 'min'))
-
-## Setup the data
-ranks <- as.data.frame(ranks)
-colnames(ranks) <- names(dim.list)[names(dim.list) != "Unintegrated"]
-rownames(ranks) <- c("iLISI_Lung","iLISI_Pancreas","cLISI_Lung","cLISI_Pancreas","Over-correction", "Overall")
-
-## Plot the heatmap
-Heatmap(ranks ,
-        show_heatmap_legend = F,
-        heatmap_legend_param = list(color_bar = "discrete"),
-        cluster_rows = FALSE,
-        cluster_columns = FALSE,
-        rect_gp = gpar(col = "black", lwd = 1),
-        col = colorRamp2(c(1, 8), c("#EFF3FF", "#2171B5")),
-        row_names_side = "left")
-
-## Write the metrics to a spreadsheet
-colnames(lisi.res) <- c("Method","Overcorrection","iLISI_Lung","iLISI_Pancreas","cLISI_Lung","cLISI_Pancreas")
-writexl::write_xlsx(lisi.res, path = "overcorrection_supplementary_table.xlsx")
